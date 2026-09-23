@@ -25,9 +25,17 @@ por processo**; com heap 60 MB o Zigbee2MQTT só sobe **com** PC. O Node 25 sem 
 | flavor | `./configure` | para quê |
 |---|---|---|
 | `pc` | `--experimental-enable-pointer-compression` | o ganho medido acima |
-| `lean` | `pc` + `--v8-lite-mode --with-intl=small-icu --without-inspector --without-sqlite` | menos código mapeado e menos memória de compilação; ICU só em inglês; sem depurador; sem `node:sqlite` |
+| ~~`lean`~~ | `pc` + `--v8-lite-mode …` | **descartado:** o V8 em lite-mode é compilado **sem WebAssembly** (o build falha em `bad option: --experimental-wasm-jspi`), e o `fetch()` do Node (undici) depende de WebAssembly |
 
 Fonte: tarball oficial de nodejs.org, checksum conferido contra `SHASUMS256.txt`. Sem patches. Addons Node-API
 (ex.: `@serialport/bindings-cpp`) funcionam; addons NAN/API V8 direta precisam de rebuild.
 
 Rodar: Actions → build-node-pointer-compression → Run workflow (versão e flavor). O resultado vira uma release.
+
+## Não use `--jitless` nem `--lite-mode` para economizar
+
+Os dois desligam o **WebAssembly**, e o `fetch()` do Node (undici) usa WebAssembly para interpretar HTTP:
+`fetch` falha com `ReferenceError: WebAssembly is not defined`. Num Home Assistant isso quebrou, sem nenhum
+aviso visível, a consulta do Matter Server ao DCL (atualizações de firmware, dados de fabricantes) e a checagem de
+firmware do Z-Wave JS. Para cortar o JIT de JavaScript **mantendo** o WebAssembly, use `--max-opt=0` (só o
+interpretador) ou `--max-opt=1` — atenção: `--max-opt` não é aceito em `NODE_OPTIONS`, só na linha de comando.
