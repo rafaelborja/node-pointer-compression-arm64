@@ -10,11 +10,11 @@ on:
         default: "v24.21.0"
         required: true
       flavor:
-        description: "pc = so pointer compression; lean = pc + v8-lite-mode, small-icu, sem inspector, sem sqlite"
+        description: "pc = so pointer compression; slim = pc + small-icu, sem inspector/sqlite/amaro (mantem WebAssembly)"
         default: "pc"
         required: true
         type: choice
-        options: [pc, lean]
+        options: [pc, slim]
 permissions:
   contents: write
 jobs:
@@ -36,7 +36,8 @@ jobs:
       - name: configure (pointer compression)
         run: |
           EXTRA=""
-          [ "$F" = lean ] && EXTRA="--v8-lite-mode --with-intl=small-icu --without-inspector --without-sqlite"
+          # NAO usar --v8-lite-mode: tira o WebAssembly, e o fetch() do Node (undici) depende dele (build falha em --experimental-wasm-jspi)
+          [ "$F" = slim ] && EXTRA="--with-intl=small-icu --without-inspector --without-sqlite --without-amaro"
           cd node-$V && ./configure --prefix=/opt/node --experimental-enable-pointer-compression $EXTRA
       - name: make
         run: cd node-$V && make -j$(nproc)
@@ -46,6 +47,7 @@ jobs:
           /opt/node/bin/node -p "process.version + ' pc=' + process.config.variables.v8_enable_pointer_compression"
           test "$(/opt/node/bin/node -p process.config.variables.v8_enable_pointer_compression)" = "1"
           /opt/node/bin/node -e "const a=[];for(let i=0;i<1e6;i++)a.push({i});console.log('ok',a.length)"
+          test "$(/opt/node/bin/node -p 'typeof WebAssembly')" = "object"   # o fetch depende de WebAssembly
       - name: empacotar
         run: |
           N=node-$V-linux-arm64-musl-$F

@@ -25,6 +25,7 @@ por processo**; com heap 60 MB o Zigbee2MQTT só sobe **com** PC. O Node 25 sem 
 | flavor | `./configure` | para quê |
 |---|---|---|
 | `pc` | `--experimental-enable-pointer-compression` | o ganho medido acima |
+| `slim` | `pc` + `--with-intl=small-icu --without-inspector --without-sqlite --without-amaro` | menos código mapeado: ICU só em inglês, sem depurador, sem `node:sqlite`, sem o removedor de tipos TypeScript. **Mantém WebAssembly** (o CI confere) |
 | ~~`lean`~~ | `pc` + `--v8-lite-mode …` | **descartado:** o V8 em lite-mode é compilado **sem WebAssembly** (o build falha em `bad option: --experimental-wasm-jspi`), e o `fetch()` do Node (undici) depende de WebAssembly |
 
 Fonte: tarball oficial de nodejs.org, checksum conferido contra `SHASUMS256.txt`. Sem patches. Addons Node-API
