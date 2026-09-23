@@ -1,11 +1,33 @@
 # node-pointer-compression-arm64
 
-Builds do Node.js **com V8 pointer compression** para **linux arm64 musl (Alpine)** — que ninguém publica pronto
-para o Node 24 LTS. Uso: add-ons Node do Home Assistant (Zigbee2MQTT, Z-Wave JS UI, Matter Server) num HAOS aarch64
-com pouca RAM. Medido (Node 25.8.2, mesma versão com e sem PC, heap 128): −21 a −24% de heap V8, −12 a −27 MB de
-RSS por processo.
+Builds do Node.js **com V8 pointer compression** para **linux arm64 musl (Alpine)**.
 
-- Fonte: tarball oficial de nodejs.org, checksum conferido. Sem patches.
-- `./configure --experimental-enable-pointer-compression` (cage compartilhada desde nodejs/node#58171, v24.2.0):
-  limite de 4 GB de heap por processo; addons Node-API funcionam, NAN/V8-API precisam de rebuild.
-- Rodar: Actions → build-node-pointer-compression → Run workflow (versão, ex.: `v24.21.0`). O resultado vira uma release.
+## Por que compilar
+
+- **Ninguém publica isso pronto para o Node 24 LTS em arm64 musl.** O `nodejs/unofficial-builds` só tem pointer
+  compression para x64/riscv64; o `platformatic/node-caged` só para Node 25/26; o único build 24 arm64 com PC que
+  existe (sublimelsp) é glibc, 24.15, e traz patches do Electron.
+- **Segurança:** o Node 25 chegou ao fim de vida em 2026-06-01 e os builds 25.x/26.1 prontos estão sem as correções
+  HIGH de junho/julho de 2026. O Node 24 é LTS até abril de 2028.
+- **Compatibilidade:** o Zigbee2MQTT exige Node `<=26.2` (o `serialport` quebra no 26.3+), então o 26.x corrigido
+  não serve; o 24 LTS serve.
+- **O PC no Node 24 funciona** desde nodejs/node#58171 (v24.2.0), com cage compartilhada: limite de 4 GB de heap por
+  processo — irrelevante para daemons de ~100 MB.
+
+## O que se ganha (medido)
+
+Home Assistant OS numa VM aarch64 de 4 GB (Pixel 8 Pro), add-ons Zigbee2MQTT, Z-Wave JS UI e Matter Server.
+Mesma versão do Node (25.8.2, node-caged), com e sem PC, heap 128 MB: **−21 a −24% de heap V8, −12 a −27 MB de RSS
+por processo**; com heap 60 MB o Zigbee2MQTT só sobe **com** PC. O Node 25 sem PC gasta o mesmo que o 24.
+
+## Sabores
+
+| flavor | `./configure` | para quê |
+|---|---|---|
+| `pc` | `--experimental-enable-pointer-compression` | o ganho medido acima |
+| `lean` | `pc` + `--v8-lite-mode --with-intl=small-icu --without-inspector --without-sqlite` | menos código mapeado e menos memória de compilação; ICU só em inglês; sem depurador; sem `node:sqlite` |
+
+Fonte: tarball oficial de nodejs.org, checksum conferido contra `SHASUMS256.txt`. Sem patches. Addons Node-API
+(ex.: `@serialport/bindings-cpp`) funcionam; addons NAN/API V8 direta precisam de rebuild.
+
+Rodar: Actions → build-node-pointer-compression → Run workflow (versão e flavor). O resultado vira uma release.
