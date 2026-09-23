@@ -1,0 +1,53 @@
+name: build-node-pointer-compression
+# Node.js com V8 pointer compression para linux arm64 musl (Alpine), para os add-ons Node do Home Assistant
+# (Zigbee2MQTT, Z-Wave JS UI, Matter Server) num HAOS aarch64. Desde o PR nodejs/node#58171 (v24.2.0) o build com
+# --experimental-enable-pointer-compression funciona com cage compartilhada (limite de 4 GB por processo).
+on:
+  workflow_dispatch:
+    inputs:
+      node_version:
+        description: "versao do Node (ex.: v24.21.0)"
+        default: "v24.21.0"
+        required: true
+permissions:
+  contents: write
+jobs:
+  musl-arm64:
+    runs-on: ubuntu-24.04-arm
+    container: alpine:3.24
+    timeout-minutes: 350
+    env:
+      V: ${{ inputs.node_version }}
+    steps:
+      - name: dependencias de build
+        run: apk add --no-cache python3 make g++ linux-headers curl xz tar git
+      - name: fonte oficial + checksum
+        run: |
+          curl -fsSLO https://nodejs.org/dist/$V/node-$V.tar.xz
+          curl -fsSL https://nodejs.org/dist/$V/SHASUMS256.txt | grep " node-$V.tar.xz\$" | sha256sum -c -
+          tar xf node-$V.tar.xz
+      - name: configure (pointer compression)
+        run: cd node-$V && ./configure --prefix=/opt/node --experimental-enable-pointer-compression
+      - name: make
+        run: cd node-$V && make -j$(nproc)
+      - name: install + conferencia
+        run: |
+          cd node-$V && make install
+          /opt/node/bin/node -p "process.version + ' pc=' + process.config.variables.v8_enable_pointer_compression"
+          test "$(/opt/node/bin/node -p process.config.variables.v8_enable_pointer_compression)" = "1"
+          /opt/node/bin/node -e "const a=[];for(let i=0;i<1e6;i++)a.push({i});console.log('ok',a.length)"
+      - name: empacotar
+        run: |
+          N=node-$V-linux-arm64-musl-pointer-compression
+          mkdir -p out && cp -a /opt/node out/$N && tar -C out -cJf $N.tar.xz $N
+          sha256sum $N.tar.xz > $N.tar.xz.sha256
+      - name: release
+        run: |
+          apk add --no-cache github-cli
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          N=node-$V-linux-arm64-musl-pointer-compression
+          gh release create "$V-pc-musl" $N.tar.xz $N.tar.xz.sha256 --repo "$GITHUB_REPOSITORY" \
+            --title "Node $V pointer compression (linux arm64 musl)" \
+            --notes "Build de nodejs.org/dist/$V com ./configure --experimental-enable-pointer-compression, em alpine:3.24 (musl) num runner ubuntu-24.04-arm. Sem patches. Checksum da fonte conferido contra SHASUMS256.txt oficial."
+        env:
+          GH_TOKEN: ${{ github.token }}
