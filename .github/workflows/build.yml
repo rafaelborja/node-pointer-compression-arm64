@@ -57,9 +57,9 @@ jobs:
         run: |
           apk add --no-cache github-cli
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
-          N=node-$V-linux-arm64-musl-pointer-compression
-          gh release create "$V-pc-musl" $N.tar.xz $N.tar.xz.sha256 --repo "$GITHUB_REPOSITORY" \
-            --title "Node $V pointer compression (linux arm64 musl)" \
+          N=node-$V-linux-arm64-musl-$F
+          gh release create "$V-$F-musl" $N.tar.xz $N.tar.xz.sha256 --repo "$GITHUB_REPOSITORY" \
+            --title "Node $V $F (linux arm64 musl)" \
             --notes "Build de nodejs.org/dist/$V com ./configure --experimental-enable-pointer-compression, em alpine:3.24 (musl) num runner ubuntu-24.04-arm. Sem patches. Checksum da fonte conferido contra SHASUMS256.txt oficial."
         env:
           GH_TOKEN: ${{ github.token }}
