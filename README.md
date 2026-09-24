@@ -40,3 +40,14 @@ Os dois desligam o **WebAssembly**, e o `fetch()` do Node (undici) usa WebAssemb
 aviso visível, a consulta do Matter Server ao DCL (atualizações de firmware, dados de fabricantes) e a checagem de
 firmware do Z-Wave JS. Para cortar o JIT de JavaScript **mantendo** o WebAssembly, use `--max-opt=0` (só o
 interpretador) ou `--max-opt=1` — atenção: `--max-opt` não é aceito em `NODE_OPTIONS`, só na linha de comando.
+
+## Imagens dos add-ons sobre uma camada comum (`build-addon-images`)
+
+O workflow `images.yml` pega as imagens **oficiais** do Zigbee2MQTT e do Z-Wave JS UI e troca só o `/usr/bin/node`:
+as duas passam a começar na mesma camada-base, que contém o Node pointer compression deste repo. Camada igual no
+overlay2 = mesmo inode = o kernel guarda **uma** cópia do binário na memória, em vez de uma por add-on. O
+`/usr/bin/node` vira um wrapper com `--max-opt=1 --max-old-space-size=64 --max-semi-space-size=2` — os limites
+medidos no HAOS do projeto (64 MB é o piso; 48 e 32 não sobem o Zigbee2MQTT). Nada de `--jitless`/`--lite-mode`.
+
+Saída: um release com um único `docker save` das três imagens (a camada comum vai uma vez só). O app dentro de cada
+imagem é byte a byte o da imagem oficial; ver `images/build-images.sh`.
