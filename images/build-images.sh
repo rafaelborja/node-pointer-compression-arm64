@@ -42,13 +42,13 @@ for pair in "$@"; do
     echo "FROM $BASE"
     echo "COPY --from=strip / /"
     docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$src" | while IFS= read -r l; do
-      [ -n "$l" ] && echo "ENV ${l%%=*}=\"$(esc "${l#*=}")\""; done
+      if [ -n "$l" ]; then echo "ENV ${l%%=*}=\"$(esc "${l#*=}")\""; fi; done
     docker inspect -f '{{range $k,$v := .Config.Labels}}{{$k}}={{$v}}{{println}}{{end}}' "$src" | while IFS= read -r l; do
-      [ -n "$l" ] && echo "LABEL \"${l%%=*}\"=\"$(esc "${l#*=}")\""; done
+      if [ -n "$l" ]; then echo "LABEL \"${l%%=*}\"=\"$(esc "${l#*=}")\""; fi; done
     echo "LABEL io.github.rafaelborja.node-pc.source=\"$src\""
-    wd=$(docker inspect -f '{{.Config.WorkingDir}}' "$src"); [ -n "$wd" ] && echo "WORKDIR $wd"
-    ep=$(docker inspect -f '{{json .Config.Entrypoint}}' "$src"); [ "$ep" != null ] && echo "ENTRYPOINT $ep"
-    cm=$(docker inspect -f '{{json .Config.Cmd}}' "$src"); [ "$cm" != null ] && echo "CMD $cm"
+    wd=$(docker inspect -f '{{.Config.WorkingDir}}' "$src"); if [ -n "$wd" ]; then echo "WORKDIR $wd"; fi
+    ep=$(docker inspect -f '{{json .Config.Entrypoint}}' "$src"); if [ "$ep" != null ]; then echo "ENTRYPOINT $ep"; fi
+    cm=$(docker inspect -f '{{json .Config.Cmd}}' "$src"); if [ "$cm" != null ]; then echo "CMD $cm"; fi
   } > "$d/Dockerfile"
   cat "$d/Dockerfile"
   docker build -t "$dst" "$d"
