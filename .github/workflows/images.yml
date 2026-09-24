@@ -1,0 +1,61 @@
+name: build-addon-images
+# Imagens do Zigbee2MQTT e do Z-Wave JS UI (add-ons do Home Assistant, aarch64) sobre uma camada-base comum com o
+# Node pointer compression deste repo. Detalhes e o porque em images/build-images.sh e no README.
+# Saida: um release com UM arquivo `docker save` das tres imagens (a camada comum vai uma vez so). No HAOS:
+#   curl -L <asset> | gunzip | docker load
+on:
+  workflow_dispatch:
+    inputs:
+      node_release:
+        description: "release deste repo com o Node (ex.: v24.21.0-pc-musl)"
+        default: "v24.21.0-pc-musl"
+        required: true
+      z2m:
+        description: "imagem oficial do add-on Zigbee2MQTT"
+        default: "ghcr.io/zigbee2mqtt/zigbee2mqtt-aarch64:2.14.1-1"
+        required: true
+      zwjsui:
+        description: "imagem oficial do add-on Z-Wave JS UI"
+        default: "ghcr.io/hassio-addons/zwave-js-ui:7.7.0"
+        required: true
+permissions:
+  contents: write
+jobs:
+  images:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 60
+    env:
+      GH_TOKEN: ${{ github.token }}
+      NR: ${{ inputs.node_release }}
+      Z2M: ${{ inputs.z2m }}
+      ZW: ${{ inputs.zwjsui }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: node do release (checksum conferido)
+        run: |
+          mkdir -p dl && cd dl
+          gh release download "$NR" --repo "$GITHUB_REPOSITORY" --pattern '*.tar.xz' --pattern '*.tar.xz.sha256'
+          sha256sum -c *.sha256
+          tar xf *.tar.xz && ls
+      - name: build
+        run: |
+          NV=${NR%%-*}
+          echo "BASE=local/node-pc-base:$NV" >> $GITHUB_ENV
+          echo "Z2M_L=local/zigbee2mqtt-node-pc:${Z2M##*:}" >> $GITHUB_ENV
+          echo "ZW_L=local/zwave-js-ui-node-pc:${ZW##*:}" >> $GITHUB_ENV
+          sh images/build-images.sh "$(ls -d dl/node-*/)" "local/node-pc-base:$NV" \
+            "$Z2M=local/zigbee2mqtt-node-pc:${Z2M##*:}" "$ZW=local/zwave-js-ui-node-pc:${ZW##*:}"
+      - name: empacotar (docker save das tres; camadas comuns uma vez)
+        run: |
+          docker save "$BASE" "$Z2M_L" "$ZW_L" | gzip -6 > addon-images.tar.gz
+          sha256sum addon-images.tar.gz > addon-images.tar.gz.sha256
+          { echo "base: $BASE  camada: $(docker inspect -f '{{index .RootFS.Layers 0}}' $BASE)"
+            for i in "$Z2M_L" "$ZW_L"; do echo "$i  1a camada: $(docker inspect -f '{{index .RootFS.Layers 0}}' $i)  fonte: $(docker inspect -f '{{index .Config.Labels "io.github.rafaelborja.node-pc.source"}}' $i)"; done
+          } > MANIFEST.txt
+          cat MANIFEST.txt; ls -la addon-images.tar.gz
+      - name: release
+        run: |
+          T="images-${NR%%-*}-z2m-${Z2M##*:}-zwjsui-${ZW##*:}"
+          gh release create "$T" addon-images.tar.gz addon-images.tar.gz.sha256 MANIFEST.txt --repo "$GITHUB_REPOSITORY" \
+            --title "Imagens dos add-ons: Z2M ${Z2M##*:} + Z-Wave JS UI ${ZW##*:} sobre Node ${NR%%-*} PC" \
+            --notes "Apps identicos as imagens oficiais ($Z2M, $ZW); so o /usr/bin/node muda: vira um wrapper para o Node pointer compression do release $NR, com --max-opt=1 --max-old-space-size=64 --max-semi-space-size=2 (nunca --jitless/--lite-mode: quebram o fetch). As duas imagens comecam na mesma camada-base, entao o binario do node fica numa copia so na memoria. Ver images/build-images.sh."
