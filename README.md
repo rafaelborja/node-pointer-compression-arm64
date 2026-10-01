@@ -16,7 +16,7 @@ Builds do Node.js **com V8 pointer compression** para **linux arm64 musl (Alpine
 
 ## O que se ganha (medido)
 
-Home Assistant OS numa VM aarch64 de 4 GB (Pixel 8 Pro), add-ons Zigbee2MQTT, Z-Wave JS UI e Matter Server.
+Home Assistant OS numa VM aarch64 de 4 GB, add-ons Zigbee2MQTT, Z-Wave JS UI e Matter Server.
 Mesma versão do Node (25.8.2, node-caged), com e sem PC, heap 128 MB: **−21 a −24% de heap V8, −12 a −27 MB de RSS
 por processo**; com heap 60 MB o Zigbee2MQTT só sobe **com** PC. O Node 25 sem PC gasta o mesmo que o 24.
 

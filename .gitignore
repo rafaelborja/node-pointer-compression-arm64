@@ -1,0 +1,4 @@
+# listas tiradas de add-ons em execucao (cobertura V8) e o portao de testes local: nao publicar
+images/loaded-files/
+images/tests/
+out/

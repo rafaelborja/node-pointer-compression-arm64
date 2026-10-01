@@ -1,8 +1,11 @@
 name: build-addon-images
-# Imagens do Zigbee2MQTT e do Z-Wave JS UI (add-ons do Home Assistant, aarch64) sobre uma camada-base comum com o
-# Node pointer compression deste repo. Detalhes e o porque em images/build-images.sh e no README.
-# Saida: um release com UM arquivo `docker save` das tres imagens (a camada comum vai uma vez so). No HAOS:
-#   curl -L <asset> | gunzip | docker load
+# Imagens dos add-ons Node do Home Assistant (aarch64) -- Zigbee2MQTT, Z-Wave JS UI, Matter Server -- sobre a
+# camada-base v2 (Node pointer compression autocontido em /opt/node-pc) + "fonte limpa" (pc3: esbuild em TODOS os
+# .js/.mjs/.cjs do app, com names-check e --keep-names so onde precisa). Receita em images/build-all.sh.
+# Saida (EXPERIMENTAL):
+#   - GHCR: ghcr.io/<dono>/ha-lite-node-base, ha-lite-z2m, ha-lite-zwjsui, ha-lite-matter (linux/arm64), com atestado
+#     de proveniencia do build (actions/attest-build-provenance);
+#   - release com um `docker save` da base + tres pc3 (camada comum 1x), MANIFEST e os digests SHA-256.
 on:
   workflow_dispatch:
     inputs:
@@ -18,44 +21,115 @@ on:
         description: "imagem oficial do add-on Z-Wave JS UI"
         default: "ghcr.io/hassio-addons/zwave-js-ui:7.7.0"
         required: true
+      matter:
+        description: "imagem oficial do add-on Matter Server"
+        default: "homeassistant/aarch64-addon-matter-server:9.2.0"
+        required: true
+      push:
+        description: "publicar no GHCR (false = so build + conferencia)"
+        type: boolean
+        default: true
 permissions:
   contents: write
+  packages: write
+  id-token: write
+  attestations: write
 jobs:
   images:
     runs-on: ubuntu-24.04-arm
-    timeout-minutes: 60
+    timeout-minutes: 300
     env:
       GH_TOKEN: ${{ github.token }}
-      NR: ${{ inputs.node_release }}
+      NODE_RELEASE: ${{ inputs.node_release }}
       Z2M: ${{ inputs.z2m }}
-      ZW: ${{ inputs.zwjsui }}
+      ZWJSUI: ${{ inputs.zwjsui }}
+      MATTER: ${{ inputs.matter }}
+      TAGNS: local
+      CLEAN_LIST: ALL
+      JOBS: "8"
+      # exclusoes da fonte limpa (regex grep -E sobre o caminho): interfaces web servidas ao navegador ficam como estao.
+      CLEAN_EXCLUDE_z2m: "zigbee2mqtt-(windfront|frontend)"
+      CLEAN_EXCLUDE_zwjsui: "/opt/dist/"
+      CLEAN_EXCLUDE_matter: "/(dashboard|frontend|web)/"
     steps:
       - uses: actions/checkout@v4
-      - name: node do release (checksum conferido)
+      - uses: docker/setup-buildx-action@v3
+        with:
+          driver: docker
+      - name: base v2 + pc2 + pc3 + conferencia + docker save
+        run: sh images/build-all.sh out
+      - name: smoke test (cada app carrega a biblioteca principal)
         run: |
-          mkdir -p dl && cd dl
-          gh release download "$NR" --repo "$GITHUB_REPOSITORY" --pattern '*.tar.xz' --pattern '*.tar.xz.sha256'
-          sha256sum -c *.sha256
-          tar xf *.tar.xz && ls
-      - name: build
+          set -eu
+          NV=${NODE_RELEASE%%-*}; NV=${NV#v}
+          docker run --rm --platform linux/arm64 --entrypoint node "local/node24pc-base:$NV-v2" -e 'console.log("base:", process.version, "pc:", process.config.variables.v8_enable_pointer_compression)'
+          docker run --rm --platform linux/arm64 -w /app --entrypoint node "local/z2m-pc3:${Z2M##*:}" -e 'require("zigbee-herdsman-converters"); require("zigbee-herdsman"); console.log("z2m: herdsman + converters ok")'
+          docker run --rm --platform linux/arm64 -w /opt --entrypoint node "local/zwjsui-pc3:${ZWJSUI##*:}" -e 'require("zwave-js"); console.log("zwjsui: zwave-js ok")'
+      - uses: docker/login-action@v3
+        if: ${{ inputs.push }}
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: tag + push
+        id: push
+        if: ${{ inputs.push }}
         run: |
-          NV=${NR%%-*}
-          echo "BASE=local/node-pc-base:$NV" >> $GITHUB_ENV
-          echo "Z2M_L=local/zigbee2mqtt-node-pc:${Z2M##*:}" >> $GITHUB_ENV
-          echo "ZW_L=local/zwave-js-ui-node-pc:${ZW##*:}" >> $GITHUB_ENV
-          sh images/build-images.sh "$(ls -d dl/node-*/)" "local/node-pc-base:$NV" \
-            "$Z2M=local/zigbee2mqtt-node-pc:${Z2M##*:}" "$ZW=local/zwave-js-ui-node-pc:${ZW##*:}"
-      - name: empacotar (docker save das tres; camadas comuns uma vez)
-        run: |
-          docker save "$BASE" "$Z2M_L" "$ZW_L" | gzip -6 > addon-images.tar.gz
-          sha256sum addon-images.tar.gz > addon-images.tar.gz.sha256
-          { echo "base: $BASE  camada: $(docker inspect -f '{{index .RootFS.Layers 0}}' $BASE)"
-            for i in "$Z2M_L" "$ZW_L"; do echo "$i  1a camada: $(docker inspect -f '{{index .RootFS.Layers 0}}' $i)  fonte: $(docker inspect -f '{{index .Config.Labels "io.github.rafaelborja.node-pc.source"}}' $i)"; done
-          } > MANIFEST.txt
-          cat MANIFEST.txt; ls -la addon-images.tar.gz
+          set -eu
+          NV=${NODE_RELEASE%%-*}; NV=${NV#v}
+          O=ghcr.io/$(echo "$GITHUB_REPOSITORY_OWNER" | tr 'A-Z' 'a-z')
+          SRCURL="https://github.com/${GITHUB_REPOSITORY}"
+          : > out/DIGESTS.txt
+          push(){ # imagem local, nome remoto, descricao, chave
+            printf 'FROM %s\nLABEL org.opencontainers.image.source="%s" org.opencontainers.image.description="HA Lite (EXPERIMENTAL): %s"\n' "$1" "$SRCURL" "$3" \
+              | docker build --platform linux/arm64 --provenance=false -t "$2" -
+            docker push "$2" >/dev/null
+            d=$(docker inspect -f '{{index .RepoDigests 0}}' "$2"); echo "$2 ${d#*@}" | tee -a out/DIGESTS.txt
+            echo "$4=${d#*@}" >> "$GITHUB_OUTPUT"
+          }
+          push "local/node24pc-base:$NV-v2" "$O/ha-lite-node-base:$NV-v2" "Node $NV pointer compression base layer" base
+          push "local/z2m-pc3:${Z2M##*:}" "$O/ha-lite-z2m:${Z2M##*:}" "Zigbee2MQTT ${Z2M##*:} on Node PC, clean source" z2m
+          push "local/zwjsui-pc3:${ZWJSUI##*:}" "$O/ha-lite-zwjsui:${ZWJSUI##*:}" "Z-Wave JS UI ${ZWJSUI##*:} on Node PC, clean source" zwjsui
+          push "local/matter-pc3:${MATTER##*:}" "$O/ha-lite-matter:${MATTER##*:}" "Matter Server ${MATTER##*:} on Node PC, clean source" matter
+          echo "owner=$O" >> "$GITHUB_OUTPUT"
+      - uses: actions/attest-build-provenance@v2
+        if: ${{ inputs.push }}
+        with:
+          subject-name: ${{ steps.push.outputs.owner }}/ha-lite-node-base
+          subject-digest: ${{ steps.push.outputs.base }}
+          push-to-registry: true
+      - uses: actions/attest-build-provenance@v2
+        if: ${{ inputs.push }}
+        with:
+          subject-name: ${{ steps.push.outputs.owner }}/ha-lite-z2m
+          subject-digest: ${{ steps.push.outputs.z2m }}
+          push-to-registry: true
+      - uses: actions/attest-build-provenance@v2
+        if: ${{ inputs.push }}
+        with:
+          subject-name: ${{ steps.push.outputs.owner }}/ha-lite-zwjsui
+          subject-digest: ${{ steps.push.outputs.zwjsui }}
+          push-to-registry: true
+      - uses: actions/attest-build-provenance@v2
+        if: ${{ inputs.push }}
+        with:
+          subject-name: ${{ steps.push.outputs.owner }}/ha-lite-matter
+          subject-digest: ${{ steps.push.outputs.matter }}
+          push-to-registry: true
       - name: release
+        if: ${{ inputs.push }}
         run: |
-          T="images-${NR%%-*}-z2m-${Z2M##*:}-zwjsui-${ZW##*:}"
-          gh release create "$T" addon-images.tar.gz addon-images.tar.gz.sha256 MANIFEST.txt --repo "$GITHUB_REPOSITORY" \
-            --title "Imagens dos add-ons: Z2M ${Z2M##*:} + Z-Wave JS UI ${ZW##*:} sobre Node ${NR%%-*} PC" \
-            --notes "Apps identicos as imagens oficiais ($Z2M, $ZW); so o /usr/bin/node muda: vira um wrapper para o Node pointer compression do release $NR, com --max-opt=1 --max-old-space-size=64 --max-semi-space-size=2 (nunca --jitless/--lite-mode: quebram o fetch). As duas imagens comecam na mesma camada-base, entao o binario do node fica numa copia so na memoria. Ver images/build-images.sh."
+          NV=${NODE_RELEASE%%-*}
+          T="ha-lite-$NV-v2-z2m-${Z2M##*:}-zwjsui-${ZWJSUI##*:}-matter-${MATTER##*:}"
+          {
+            echo "**EXPERIMENTAL** (HA Lite). Apps identical to the official images ($Z2M, $ZWJSUI, $MATTER), except:"
+            echo "1. \`/usr/bin/node\` is a wrapper for the Node pointer-compression build from release $NODE_RELEASE, self-contained in /opt/node-pc, with --max-opt=1 --max-old-space-size=64 --max-semi-space-size=2."
+            echo "2. Clean source: every .js/.mjs/.cjs of the app (web UIs excluded) goes through esbuild --charset=ascii --legal-comments=inline --minify-whitespace; --keep-names only where esbuild would change a name (checked by names-check.js at build time; licenses kept; no source maps)."
+            echo
+            echo "Images (linux/arm64). Verify the build provenance with \`gh attestation verify oci://<image>@<digest> --repo $GITHUB_REPOSITORY\`:"
+            echo '```'; cat out/DIGESTS.txt; echo '```'
+          } > out/NOTES.md
+          gh release create "$T" out/node-addon-images-pc3.tar.gz out/node-addon-images-pc3.tar.gz.sha256 out/MANIFEST.txt out/DIGESTS.txt \
+            --repo "$GITHUB_REPOSITORY" --prerelease \
+            --title "HA Lite (experimental): Z2M ${Z2M##*:} + Z-Wave JS UI ${ZWJSUI##*:} + Matter ${MATTER##*:} on Node $NV PC" \
+            --notes-file out/NOTES.md
