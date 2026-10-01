@@ -62,8 +62,8 @@ jobs:
         run: |
           set -eu
           NV=${NODE_RELEASE%%-*}; NV=${NV#v}
-          docker run --rm --platform linux/arm64 --entrypoint node "local/node24pc-base:$NV-v2" -e 'console.log("base:", process.version, "pc:", process.config.variables.v8_enable_pointer_compression)'
-          docker run --rm --platform linux/arm64 -w /app --entrypoint node "local/z2m-pc3:${Z2M##*:}" -e 'require("zigbee-herdsman-converters"); require("zigbee-herdsman"); console.log("z2m: herdsman + converters ok")'
+          # a base sozinha nao tem /bin/sh (o node e um wrapper); confere o PC dentro das imagens dos apps
+          docker run --rm --platform linux/arm64 -w /app --entrypoint node "local/z2m-pc3:${Z2M##*:}" -e 'require("zigbee-herdsman-converters"); require("zigbee-herdsman"); console.log("z2m: herdsman + converters ok;", process.version, "pc:", process.config.variables.v8_enable_pointer_compression)'
           docker run --rm --platform linux/arm64 -w /opt --entrypoint node "local/zwjsui-pc3:${ZWJSUI##*:}" -e 'require("zwave-js"); console.log("zwjsui: zwave-js ok")'
       - uses: docker/login-action@v3
         if: ${{ inputs.push }}
