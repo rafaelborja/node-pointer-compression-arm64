@@ -38,8 +38,16 @@ cd /
 sh /clean-tree.sh -j "$jobs" -p /work -o /out -s /resumo.txt -k /out/opt/node-pc/clean-keepnames-$n.txt -x "$x" < /files.txt
 # conferencia final: NENHUM nome de funcao/classe/metodo mudou (falha o build se mudou)
 sed 's#^#/orig/#' /rel.txt > /orig.txt
-if ! node /names-check.js /orig.txt /orig/ /work/ > /names.txt; then grep -v '^arquivos:' /names.txt | head -20; tail -1 /names.txt; exit 1; fi
-echo "$(cat /resumo.txt) esbuild=$(cat /esbuild-version) nomes: $(tail -1 /names.txt)" > /out/opt/node-pc/clean-resumo-$n.txt
+# Arquivo cujo nome mudou mesmo com --keep-names (ex.: ja minificado, UMD) volta ao ORIGINAL (nao e limpo) e a
+# conferencia roda de novo; so falha se ainda sobrar diferenca.
+: > /revertidos.txt
+if ! node /names-check.js /orig.txt /orig/ /work/ > /names.txt; then
+  sed -n 's#^NOME-DIFERE /orig/\([^ ]*\) .*#\1#p' /names.txt | sort -u > /revertidos.txt
+  [ -s /revertidos.txt ] || { grep -v '^arquivos:' /names.txt | head -20; tail -1 /names.txt; exit 1; }
+  while IFS= read -r f; do cp -p "/orig/$f" "/work/$f"; rm -f "/out/$f"; echo "revertido (nome mudaria): /$f"; done < /revertidos.txt
+  if ! node /names-check.js /orig.txt /orig/ /work/ > /names.txt; then grep -v '^arquivos:' /names.txt | head -20; tail -1 /names.txt; exit 1; fi
+fi
+echo "$(cat /resumo.txt) revertidos=$(wc -l < /revertidos.txt) esbuild=$(cat /esbuild-version) nomes: $(tail -1 /names.txt)" > /out/opt/node-pc/clean-resumo-$n.txt
 cat /out/opt/node-pc/clean-resumo-$n.txt
 EOF
 {
